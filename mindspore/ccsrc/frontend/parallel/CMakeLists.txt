@@ -16,3 +16,4 @@ endif()
 set_property(SOURCE ${_PARALLEL_SRC_FILES} PROPERTY COMPILE_DEFINITIONS
     SUBMODULE_ID=mindspore::SubModuleId::SM_PARALLEL)
 add_library(_mindspore_frontend_parallel_obj OBJECT ${_PARALLEL_SRC_FILES})
+target_link_libraries(_mindspore_frontend_parallel_obj PRIVATE DistributedIR)

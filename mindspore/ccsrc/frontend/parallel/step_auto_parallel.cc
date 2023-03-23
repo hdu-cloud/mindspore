@@ -34,6 +34,7 @@
 #include "frontend/parallel/auto_parallel/dp_algo_costmodel.h"
 #include "frontend/parallel/auto_parallel/edge_costmodel.h"
 #include "frontend/parallel/auto_parallel/graph_costmodel.h"
+#include "frontend/parallel/adapter.h"
 #include "frontend/parallel/auto_parallel/rec_core/rec_generate_strategy.h"
 #include "frontend/parallel/auto_parallel/rec_core/rec_parse_graph.h"
 #include "frontend/parallel/auto_parallel/rec_core/rec_partition.h"
@@ -51,6 +52,9 @@
 #ifdef WITH_BACKEND
 #include "ps/util.h"
 #endif
+
+using namespace framework;
+adapter hdu_adapter;
 
 namespace mindspore {
 namespace parallel {
@@ -396,8 +400,25 @@ Status ConstructCostGraphNodesByUniqueId(const std::vector<AnfNodePtr> &all_node
   }
 
   for (auto &node : all_nodes) {
+    std::string cur_target = GetCNodeTarget(node);
     // NOTE: we only care about splittable Primitive operators
     auto cnode = node->cast<CNodePtr>();
+    std::vector<std::string> hdu_inputs;
+    for(size_t t = 0; t < cnode->size(); t++){
+    	auto input  = cnode->input(t);
+	auto cinput = input->cast<CNodePtr>();
+	std::string input_name = cinput->fullname_with_scope();
+	hdu_inputs.push_back(input_name);
+    }
+    auto attrs_ms = cnode->attrs();
+    std::map<std::string, std::string> hdu_attrs;
+    for(auto& attr : attrs_ms) {
+        std::string name = attr.first;
+	std::string value = attr.second == nullptr ? "" : attr.second->DumpText();
+	hdu_attrs.insert(std::pair<std::string, std::string>(name, value));
+    }
+    std::string node_name = cnode->fullname_with_scope();
+    std::string op;
     bool bool_result = (cnode == nullptr) || (!IsValueNode<Primitive>(cnode->input(0)));
     if (bool_result) {
       continue;
@@ -429,6 +450,7 @@ Status ConstructCostGraphNodesByUniqueId(const std::vector<AnfNodePtr> &all_node
                             << ". The fullname_with_scope: " << cnode->fullname_with_scope();
         }
         loop_to_ops[loop_index]++;
+	op = current_op_ptr->name();
         cnode->set_user_data<OperatorInfo>(current_op_ptr);
         MS_LOG(INFO) << "The CNode with UniqueId: " << cnode->UniqueId()
                      << " and UniqueIdThroughCopy: " << cnode->UniqueIdThroughCopy()
@@ -462,11 +484,13 @@ Status ConstructCostGraphNodesByUniqueId(const std::vector<AnfNodePtr> &all_node
       // Needed by rec_parser
       entire_costgraph->add_inputs_tensor_name(inputs_tensor_name);
     } else {
+      op = search_cnode->second->name();
       // Two CNODEs' UniqueIds should not be equal
       MS_LOG(EXCEPTION) << "The CNode with UniqueId: " << cnode->UniqueId()
                         << " and UniqueIdThroughCopy: " << cnode->UniqueIdThroughCopy()
                         << " is set OperatorInfo: " << search_cnode->second->name() << ", Primitive: " << prim->name();
     }
+    hdu_adapter.ConvertMSNodeToHDUNode(node_name, op, cur_target, hdu_inputs, hdu_attrs);
   }
 
   MS_LOG(INFO) << "Constructing nodes for cost graph ends.";
@@ -1012,6 +1036,12 @@ Status ParallelStrategySearch(const std::vector<AnfNodePtr> &all_nodes, const Fu
   } else if (GetStrategy(entire_costgraph) != SUCCESS) {
     MS_LOG(ERROR) << "Strategy search for cost-graph fails";
     return FAILED;
+  }
+  for (auto &op : entire_costgraph->GetOperators()) {
+    if ((op->name().find(GET_NEXT) != std::string::npos) && (op->selected_strategy() == nullptr)) {
+      StrategyPtr strategyPtr = NewStrategy(hdu_adapter.GetStageId(op->name()), hdu_adapter.GetHDUStrategy(op->name()));
+      op->SetSelectedStrategy(strategyPtr, 0);
+    }
   }
   MS_LOG(INFO) << "Searching strategy succeeded.";
 

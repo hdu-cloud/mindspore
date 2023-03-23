@@ -121,7 +121,18 @@ endif()
 include(${CMAKE_SOURCE_DIR}/cmake/init.cmake)
 add_subdirectory(mindspore/ccsrc)
 add_subdirectory(mindspore/core)
+<<<<<<< Updated upstream
 
+=======
+if(ENABLE_D OR ENABLE_ACL OR ENABLE_TESTCASES)
+    include(${CMAKE_SOURCE_DIR}/cmake/dependency_graphengine.cmake)
+endif()
+
+add_subdirectory_with_faster_option(mindspore/ccsrc)
+add_subdirectory(framework)
+string(REPLACE " -Wall" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+string(REPLACE " -Werror" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+>>>>>>> Stashed changes
 if(ENABLE_TESTCASES OR ENABLE_CPP_ST)
     add_subdirectory(tests)
 endif()

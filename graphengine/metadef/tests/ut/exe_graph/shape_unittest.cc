@@ -1,0 +1,172 @@
+/**
+ * Copyright 2022 Huawei Technologies Co., Ltd
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#include "exe_graph/runtime/shape.h"
+#include <gtest/gtest.h>
+namespace gert {
+class ShapeUT : public testing::Test {};
+TEST_F(ShapeUT, DefaultConstructOk) {
+  Shape s;
+  EXPECT_EQ(s.GetDimNum(), 0);
+}
+
+TEST_F(ShapeUT, ConstructFromListOk) {
+  Shape s{8, 3, 224, 224};
+  EXPECT_EQ(s.GetDimNum(), 4);
+  EXPECT_EQ(s.GetDim(0), 8);
+  EXPECT_EQ(s.GetDim(1), 3);
+  EXPECT_EQ(s.GetDim(2), 224);
+  EXPECT_EQ(s.GetDim(3), 224);
+}
+
+TEST_F(ShapeUT, ConstructFromListOverMaxNum) {
+  Shape s{1, 2, 3, 4, 5, 6, 7, 8, 9};
+  EXPECT_EQ(s.GetDimNum(), 0);
+}
+
+TEST_F(ShapeUT, EqualOk) {
+  Shape s1{8, 3, 224, 224};
+  Shape s2{8, 3, 224, 224};
+  EXPECT_TRUE(s1 == s2);
+  EXPECT_FALSE(s1 != s2);
+}
+
+TEST_F(ShapeUT, NotEqualForSize) {
+  Shape s1{3, 224, 224};
+  Shape s2{8, 3, 224, 224};
+  EXPECT_FALSE(s1 == s2);
+  EXPECT_TRUE(s1 != s2);
+}
+
+TEST_F(ShapeUT, NotEqualForDim) {
+  Shape s1{7, 3, 224, 224};
+  Shape s2{8, 3, 224, 224};
+  EXPECT_FALSE(s1 == s2);
+  EXPECT_TRUE(s1 != s2);
+}
+
+TEST_F(ShapeUT, GetTensorShapeSizeOk) {
+  Shape s2{8, 3, 224, 224};
+  EXPECT_EQ(s2.GetShapeSize(), 8 * 3 * 224 *224);
+}
+
+TEST_F(ShapeUT, GetScalerShapeSizeOk) {
+  Shape s;
+  EXPECT_EQ(s.GetShapeSize(), 1);
+}
+
+TEST_F(ShapeUT, Get1ShapeSizeOk) {
+  Shape s{1};
+  EXPECT_EQ(s.GetShapeSize(), 1);
+}
+
+TEST_F(ShapeUT, GetShapeOverflow) {
+  Shape s{8, 3, 224, std::numeric_limits<int64_t>::max()};
+  EXPECT_LT(s.GetShapeSize(), 0);
+}
+
+TEST_F(ShapeUT, GetEmptyTensorShapeSize) {
+  Shape s2{8, 3, 224, 0};
+  EXPECT_EQ(s2.GetShapeSize(), 0);
+}
+
+TEST_F(ShapeUT, IsScalarOk) {
+  Shape s1;
+  Shape s2{8, 3, 224, 0};
+  EXPECT_TRUE(s1.IsScalar());
+  EXPECT_FALSE(s2.IsScalar());
+}
+
+TEST_F(ShapeUT, GetDimNumOk) {
+  Shape s1;
+  Shape s2{8, 3, 224, 0};
+  EXPECT_EQ(s1.GetDimNum(), 0);
+  EXPECT_EQ(s2.GetDimNum(), 4);
+}
+
+TEST_F(ShapeUT, SetGetDimNumOk) {
+  Shape s;
+  EXPECT_EQ(s.GetDimNum(), 0);
+  s.SetDimNum(4);
+  EXPECT_EQ(s.GetDimNum(), 4);
+}
+
+TEST_F(ShapeUT, GetDimOk) {
+  Shape s1;
+  Shape s2{8, 3, 224, 224};
+
+  EXPECT_EQ(s1.GetDim(0), 0);
+  EXPECT_EQ(s2.GetDim(0), 8);
+  EXPECT_EQ(s2.GetDim(1), 3);
+  EXPECT_EQ(s2.GetDim(2), 224);
+  EXPECT_EQ(s2.GetDim(3), 224);
+
+  EXPECT_EQ(s1[0], 0);
+  EXPECT_EQ(s2[0], 8);
+  EXPECT_EQ(s2[1], 3);
+  EXPECT_EQ(s2[2], 224);
+  EXPECT_EQ(s2[3], 224);
+}
+
+TEST_F(ShapeUT, ModifyDimOk) {
+  Shape s1;
+  Shape s2{8, 3, 224, 224};
+
+  s1[0] = 8;
+  s1[1] = 8;
+  EXPECT_EQ(s1[0], 8);
+  EXPECT_EQ(s1[1], 8);
+
+
+  s1[0] = 16;
+  s1[1] = 16;
+  EXPECT_EQ(s1[0], 16);
+  EXPECT_EQ(s1[1], 16);
+}
+
+TEST_F(ShapeUT, SetGetDimOfOutRange) {
+  Shape s1;
+  EXPECT_EQ(s1.GetDim(8), std::numeric_limits<int64_t>::min());
+  s1.SetDim(8, 10);
+}
+
+TEST_F(ShapeUT, SetGetDimOk) {
+  Shape s{1};
+  EXPECT_EQ(s.GetDim(0), 1);
+  s.SetDim(0, 10);
+  EXPECT_EQ(s.GetDim(0), 10);
+}
+
+TEST_F(ShapeUT, AppendDimOk) {
+  Shape s{1};
+  s.AppendDim(10).AppendDim(20);
+  Shape expect_s{1,10,20};
+  EXPECT_EQ(s, expect_s);
+}
+
+TEST_F(ShapeUT, AppendDimOutOfBounds) {
+  Shape s{1,2,3,4,5,6,7,8};
+  Shape expect_s{1,2,3,4,5,6,7,8};
+  s.AppendDim(10);
+  EXPECT_EQ(s, expect_s);
+}
+
+TEST_F(ShapeUT, SetScalar) {
+  Shape s{1, 2, 3, 4};
+  EXPECT_EQ(s.GetDimNum(), 4);
+  s.SetScalar();
+  EXPECT_EQ(s.GetDimNum(), 0);
+}
+}  // namespace gert

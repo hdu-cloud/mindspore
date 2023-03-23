@@ -1,0 +1,84 @@
+/**
+ * Copyright 2021-2022 Huawei Technologies Co., Ltd
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_GPU_NN_NLL_LOSS_GPU_KERNEL_H
+#define MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_GPU_NN_NLL_LOSS_GPU_KERNEL_H
+
+#include <vector>
+#include <string>
+#include <map>
+#include <unordered_map>
+#include <utility>
+#include "plugin/device/gpu/kernel/gpu_kernel.h"
+#include "plugin/factory/ms_factory.h"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/loss_with_reduction_impl.cuh"
+#include "kernel/common_utils.h"
+#include "mindapi/base/types.h"
+
+namespace mindspore {
+namespace kernel {
+class NLLLossGpuKernelMod : public NativeGpuKernelMod {
+ public:
+  NLLLossGpuKernelMod() = default;
+  ~NLLLossGpuKernelMod() override = default;
+
+  bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
+              const std::vector<AddressPtr> &outputs, void *stream_ptr) override {
+    if (is_null_input_) {
+      return true;
+    }
+    MS_EXCEPTION_IF_NULL(kernel_func_);
+    return kernel_func_(this, inputs, workspace, outputs, stream_ptr);
+  }
+
+  bool Init(const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+            const std::vector<KernelTensorPtr> &outputs) override;
+
+  int Resize(
+    const BaseOperatorPtr &base_operator, const std::vector<KernelTensorPtr> &inputs,
+    const std::vector<KernelTensorPtr> &outputs,
+    const std::map<uint32_t, tensor::TensorPtr> &inputsOnHost = std::map<uint32_t, tensor::TensorPtr>()) override;
+
+ protected:
+  std::vector<KernelAttr> GetOpSupport() override;
+
+ private:
+  void InitSizeLists();
+  template <typename T, typename S>
+  bool LaunchKernel(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
+                    const std::vector<AddressPtr> &outputs, void *stream_ptr);
+
+  using NLLLossLaunchFunc =
+    std::function<bool(NLLLossGpuKernelMod *, const std::vector<AddressPtr> &, const std::vector<AddressPtr> &,
+                       const std::vector<AddressPtr> &, void *)>;
+  static std::vector<std::pair<KernelAttr, NLLLossLaunchFunc>> func_list_;
+  NLLLossLaunchFunc kernel_func_;
+
+  bool is_null_input_;
+  size_t input_size_;
+  ReductionMode reduction_;
+  size_t logits_data_size_;
+  size_t weight_data_size_;
+  size_t tmp_loss_size_;
+  size_t tmp_target_weight_size_;
+  int n_;
+  int c_;
+  string kernel_name_;
+};
+}  // namespace kernel
+}  // namespace mindspore
+
+#endif  // MINDSPORE_CCSRC_BACKEND_KERNEL_COMPILER_GPU_NN_NLL_LOSS_GPU_KERNEL_H

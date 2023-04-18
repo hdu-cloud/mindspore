@@ -1039,8 +1039,14 @@ Status ParallelStrategySearch(const std::vector<AnfNodePtr> &all_nodes, const Fu
   }
   for (auto &op : entire_costgraph->GetOperators()) {
     if ((op->name().find(GET_NEXT) != std::string::npos) && (op->selected_strategy() == nullptr)) {
-      StrategyPtr strategyPtr = NewStrategy(hdu_adapter.GetStageId(op->name()), hdu_adapter.GetHDUStrategy(op->name()));
+      StrategyPtr strategyPtr = NewStrategy(0, hdu_adapter.GetHDUStrategy(op->name()));
       op->SetSelectedStrategy(strategyPtr, 0);
+      for (auto &node : all_nodes) {
+        if(node->UniqueName() == hdu_adapter.op_node[op->name()]) {
+          auto cnode = node->cast<CNodePtr>();
+          cnode->set_user_data<OperatorInfo>(op);
+        }
+      }
     }
   }
   MS_LOG(INFO) << "Searching strategy succeeded.";
